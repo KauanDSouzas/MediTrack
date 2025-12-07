@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MediTrack — Painel</title>
+<style>
+  :root{
+    --blue:#0d6efd;
+    --bg:#f2f6fc;
+    --card:#ffffff;
+    --muted:#6c7a91;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body,html{height:100%;margin:0;font-family:"Segoe UI", Roboto, Arial, sans-serif;background:var(--bg);color:#122238}
+  .app{display:flex;height:100vh;gap:24px;align-items:stretch;padding:12px;}
+  /* SIDEBAR */
+  .sidebar{width:260px;background:var(--blue);color:white;padding:28px 18px;display:flex;flex-direction:column;gap:12px;border-radius:12px;}
+  .brand{text-align:center;margin-bottom:6px}
+  .brand .icon{font-size:36px}
+  .brand .title{font-weight:700;font-size:20px;margin-top:6px}
+  .brand .subtitle{font-size:12px;opacity:0.9}
+  .nav a{display:block;padding:12px 12px;color:white;text-decoration:none;border-radius:10px;margin-bottom:8px;font-weight:600}
+  .nav a.active,.nav a:hover{background:rgba(255,255,255,0.08);color:#fff}
+  .logout{margin-top:auto;background:#ff4d4d;color:#fff;border:none;padding:10px;border-radius:10px;font-weight:700;cursor:pointer}
+  /* MAIN */
+  .main{flex:1;padding:28px;overflow:auto}
+  .card{background:var(--card);padding:18px;border-radius:var(--radius);box-shadow:0 6px 20px rgba(4,23,74,0.05);margin-bottom:16px}
+  .row{display:flex;gap:16px;align-items:flex-start}
+  .col{flex:1}
+  h1{margin:0;font-size:20px}
+  h3{margin:0;font-size:16px;color:var(--muted)}
+  input,select,textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #e3e9f2;margin-top:8px;font-size:14px;background:#fbfdff}
+  input:focus,select:focus,textarea:focus{outline:none;box-shadow:0 0 0 4px rgba(13,110,253,0.08);border-color:var(--blue)}
+  button.primary{background:var(--blue);color:white;padding:10px 14px;border:0;border-radius:10px;cursor:pointer;font-weight:700}
+  button.ghost{background:transparent;border:1px solid #e6eefc;color:var(--blue);padding:10px;border-radius:10px;cursor:pointer}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:10px;border-bottom:1px solid #eef2fb;text-align:left;font-size:14px}
+  th{background:#f6f9ff;color:var(--muted);font-weight:700}
+  .small{font-size:13px;color:var(--muted)}
+  .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#eef6ff;color:var(--blue);font-weight:700}
+  @media (max-width:900px){
+    .app{flex-direction:column}
+    .sidebar{width:100%;border-radius:12px 12px 0 0;flex-direction:row;align-items:center;justify-content:space-between;padding:12px 16px}
+    .nav{display:flex;gap:8px;flex:1}
+    .nav a{padding:8px 10px;font-size:14px}
+    .main{padding:16px}
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="sidebar" aria-label="Menu">
+    <div class="brand">
+      <div class="icon">💙</div>
+      <div class="title">MediTrack</div>
+      <div class="subtitle">Gestão Hospitalar</div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <a id="nav_dashboard" class="active" href="#" onclick="loadView('dashboard');return false;">Dashboard</a>
+      <a id="nav_schedule" href="#" onclick="loadView('schedule');return false;">Agendar Consulta</a>
+      <a id="nav_appointments" href="#" onclick="loadView('appointments');return false;">Minhas Consultas</a>
+      <a id="nav_admin" href="#" style="display:none" onclick="loadView('admin');return false;">Administração</a>
+    </nav>
+
+    <button class="logout" onclick="logout()">Sair</button>
+  </aside>
+
+  <main class="main" id="main"><!-- conteúdo dinâmico --></main>
+</div>
+
+<script>
+/* ============================
+  Home completo, versão robusta
+============================ */
+
+/* Sessão */
+const SESSION_EMAIL = localStorage.getItem("MEDI_USER_EMAIL");
+const SESSION_ROLE  = localStorage.getItem("MEDI_USER_ROLE");
+if(!SESSION_EMAIL){ window.location.href = "index.html"; }
+
+/* Helpers seguros para parse (não quebram se o valor for texto simples) */
+function safeParse(value){
+  if(value === null || value === undefined) return null;
+  if(typeof value !== 'string') return null;
+  value = value.trim();
+  if(value === '') return null;
+  if(/^[\{\[]/.test(value)){
+    try { return JSON.parse(value); } catch(e){ return null; }
+  }
+  return null;
+}
+
+/* Recupera todos os usuários válidos (ignora entradas inválidas) */
+function getAllUsers(){
+  const users = [];
+  for(let i=0;i<localStorage.length;i++){
+    const k = localStorage.key(i);
+    if(!k) continue;
+    if(k.startsWith("MEDI_USER_")){
+      const raw = localStorage.getItem(k);
+      const parsed = safeParse(raw);
+      if(parsed && parsed.email){ users.push(parsed); }
+      else {
+        if(typeof raw === 'string' && raw.includes('@') && !raw.includes('{')){
+          users.push({ email: k.replace("MEDI_USER_",""), name: k.replace("MEDI_USER_",""), role: "Paciente" });
+        }
+      }
+    }
+  }
+  return users;
+}
+
+/* getUser seguro */
+function getUser(email){
+  if(!email) return null;
+  const key = "MEDI_USER_" + email;
+  const raw = localStorage.getItem(key);
+  const parsed = safeParse(raw);
+  if(parsed) return parsed;
+  if(typeof raw === 'string' && raw.includes('@') && !raw.includes('{')) {
+    return { email: email, name: email, role: "Paciente" };
+  }
+  return null;
+}
+
+/* ============================
+  seedDefaults (não duplica)
+============================ */
+(function seedDefaults(){
+  const defs = [
+    {name:"Paciente Teste", email:"paciente@meditrack.com", pass:"1234", role:"Paciente", birth:"2000-01-01", contact:""},
+    {name:"Dr. Marcos Almeida", email:"profissional@meditrack.com", pass:"1234", role:"Profissional", birth:"1978-06-20", contact:"88888-1111"},
+    {name:"Admin Sistema", email:"admin@meditrack.com", pass:"1234", role:"Administrador", birth:"1980-01-01", contact:"99999-0000"}
+  ];
+  defs.forEach(u=>{
+    const key = "MEDI_USER_" + u.email;
+    const existingRaw = localStorage.getItem(key);
+    const existing = safeParse(existingRaw);
+    if(existing && existing.email === u.email){
+      // já existe e é válido — não duplicar
+      return;
+    }
+    // se existe algo inválido no localStorage para essa chave, substituímos
+    localStorage.setItem(key, JSON.stringify(u));
+  });
+})();
+
+/* ============================
+  Storage de agendamentos (unificado e seguro)
+============================ */
+const APPTS_KEY = "MEDI_APPTS";
+
+function loadAppointments(){
+  const raw = localStorage.getItem(APPTS_KEY);
+  if(!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if(Array.isArray(parsed)) return parsed;
+    return [];
+  } catch(e){
+    console.warn("APPTS_KEY corrompido, limpando...");
+    localStorage.removeItem(APPTS_KEY);
+    return [];
+  }
+}
+
+function saveAppointments(list){
+  try { localStorage.setItem(APPTS_KEY, JSON.stringify(list)); }
+  catch(e){ console.error("Erro ao salvar agendamentos", e); }
+}
+
+/* migrar chaves antigas MEDI_APPT_* (se existirem) */
+(function migrateLegacyAppts(){
+  try{
+    const legacy = [];
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith("MEDI_APPT_")){
+        const raw = localStorage.getItem(k);
+        const parsed = safeParse(raw);
+        if(parsed && parsed.id) legacy.push(parsed);
+        localStorage.removeItem(k);
+      }
+    }
+    if(legacy.length){
+      const cur = loadAppointments();
+      legacy.forEach(l => { if(!cur.find(x => x.id === l.id)) cur.push(l); });
+      saveAppointments(cur);
+    }
+  }catch(e){ console.error("migrateLegacyAppts", e); }
+})();
+
+/* ============================
+  Utilidades
+============================ */
+function uid(){ return "id"+Date.now()+Math.floor(Math.random()*9999); }
+function esc(s){ if(s===undefined || s===null) return ""; return String(s).replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+/* ============================
+  Navegação de views
+============================ */
+const main = document.getElementById("main");
+const navLinks = document.querySelectorAll('.nav a');
+function setActiveNav(id){
+  navLinks.forEach(a => a.classList.remove('active'));
+  const el = document.getElementById('nav_'+id);
+  if(el) el.classList.add('active');
+}
+if(SESSION_ROLE === "Administrador"){ document.getElementById("nav_admin").style.display = "block"; }
+
+/* inicial */
+loadView('dashboard');
+
+function loadView(view){
+  setActiveNav(view);
+  if(view === 'dashboard') renderDashboard();
+  if(view === 'schedule')  renderSchedule();
+  if(view === 'appointments') renderAppointments();
+  if(view === 'admin') renderAdmin();
+}
+
+/* ============================
+  DASHBOARD
+============================ */
+function renderDashboard(){
+  const appts = loadAppointments();
+  let relevant = [];
+  if(SESSION_ROLE === "Paciente"){
+    relevant = appts.filter(a => a.patientEmail === SESSION_EMAIL && a.status !== "Cancelado");
+  } else if(SESSION_ROLE === "Profissional"){
+    relevant = appts.filter(a => a.professionalEmail === SESSION_EMAIL && a.status !== "Cancelado");
+  } else {
+    relevant = appts.filter(a => a.status !== "Cancelado");
+  }
+  relevant.sort((a,b) => (a.date + ' ' + a.time).localeCompare(b.date + ' ' + b.time));
+  const next = relevant.length ? relevant[0] : null;
+  const pendingCount = appts.filter(a => a.status === "Pendente" && (
+    (SESSION_ROLE==="Paciente" && a.patientEmail===SESSION_EMAIL) ||
+    (SESSION_ROLE==="Profissional" && a.professionalEmail===SESSION_EMAIL) ||
+    (SESSION_ROLE==="Administrador")
+  )).length;
+
+  main.innerHTML = `
+    <div class="row" style="margin-bottom:16px;">
+      <div class="col card">
+        <h1>Próxima Consulta</h1>
+        ${ next ? `
+          <div style="margin-top:12px">
+            <div class="small">Data / Hora</div>
+            <div style="font-weight:700;margin:8px 0">${esc(next.date)} às ${esc(next.time)}</div>
+            <div class="small">Profissional</div>
+            <div style="margin:8px 0">${esc(next.professionalName)}</div>
+            <div class="small">Status</div>
+            <div style="margin:8px 0"><span class="pill">${esc(next.status)}</span></div>
+          </div>
+        ` : `<p class="small">Nenhuma consulta próxima.</p>`}
+      </div>
+
+      <div style="width:320px" class="card">
+        <h3>Consultas Pendentes</h3>
+        <div style="margin-top:10px">
+          <div style="font-size:28px;font-weight:800;color:var(--blue)">${pendingCount}</div>
+          <div class="small" style="margin-top:6px">Pendentes para seu perfil</div>
+        </div>
+
+        <div style="margin-top:18px">
+          ${ SESSION_ROLE === "Paciente" ? `<button class="primary" onclick="loadView('schedule')">Agendar Consulta</button>` : `` }
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h1>Próximas consultas</h1>
+      <div class="small" style="margin-top:8px">Lista com agendamentos relevantes</div>
+      <div id="dashboard_list" style="margin-top:12px"></div>
+    </div>
+  `;
+
+  renderDashboardList();
+}
+
+function renderDashboardList(){
+  const appts = loadAppointments().sort((a,b) => (a.date + ' ' + a.time).localeCompare(b.date + ' ' + b.time));
+  let relevant = [];
+  if(SESSION_ROLE === "Paciente") relevant = appts.filter(a => a.patientEmail === SESSION_EMAIL);
+  else if(SESSION_ROLE === "Profissional") relevant = appts.filter(a => a.professionalEmail === SESSION_EMAIL);
+  else relevant = appts;
+
+  if(!relevant.length){
+    document.getElementById('dashboard_list').innerHTML = `<p class="small">Nenhuma consulta encontrada.</p>`;
+    return;
+  }
+
+  const rows = relevant.map(a => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f1f7ff">
+      <div>
+        <div style="font-weight:700">${esc(a.date)} — ${esc(a.time)}</div>
+        <div class="small">${esc(a.patientName)} • ${esc(a.professionalName)}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="pill">${esc(a.status)}</div>
+        ${ (SESSION_ROLE==="Paciente" && a.status!=="Cancelado") ? `<div style="margin-top:8px"><button class="ghost" onclick="cancelByPatient('${a.id}')">Cancelar</button></div>` : '' }
+        ${ (SESSION_ROLE==="Profissional" && a.status==="Pendente") ? `<div style="margin-top:8px"><button class="primary" onclick="confirmByPro('${a.id}')">Confirmar</button></div>` : '' }
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('dashboard_list').innerHTML = rows;
+}
+
+/* ============================
+  AGENDAR (Paciente) - versão com min e sem duplicados
+============================ */
+function renderSchedule(){
+  const users = getAllUsers();
+
+  // dedupe profissionais por email
+  const prosMap = new Map();
+  users.forEach(u => {
+    if (u && u.role === "Profissional" && u.email) {
+      prosMap.set(u.email, u);
+    }
+  });
+  const pros = [...prosMap.values()];
+
+  if(SESSION_ROLE !== "Paciente"){
+    main.innerHTML = `<div class="card"><h1>Acesso restrito</h1><p class="small">Somente pacientes podem agendar novas consultas.</p></div>`;
+    return;
+  }
+
+  if(!pros.length){
+    main.innerHTML = `<div class="card"><h1>Agendar Consulta</h1><p class="small">Nenhum profissional disponível.</p></div>`;
+    return;
+  }
+
+  const options = pros.map(p => `<option value="${esc(p.email)}">${esc(p.name)}</option>`).join('');
+  const today = new Date().toISOString().split('T')[0];
+
+  main.innerHTML = `
+    <div class="card">
+      <h1>Agendar Consulta</h1>
+      <label>Profissional</label>
+      <select id="sch_prof">${options}</select>
+      <label>Data</label>
+      <input type="date" id="sch_date" min="${today}">
+      <label>Hora</label>
+      <input type="time" id="sch_time">
+      <label>Observações</label>
+      <textarea id="sch_notes" rows="3" placeholder="Opcional"></textarea>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <button class="primary" onclick="createAppointment()">Agendar</button>
+        <button class="ghost" onclick="loadView('dashboard')">Voltar</button>
+      </div>
+    </div>
+  `;
+}
+
+/* criação segura do agendamento */
+function createAppointment(){
+  try {
+    const prof = document.getElementById('sch_prof')?.value;
+    const date = document.getElementById('sch_date')?.value;
+    const time = document.getElementById('sch_time')?.value;
+    const notes = (document.getElementById('sch_notes')?.value || '').trim();
+
+    if(!prof || !date || !time){
+      alert('Preencha profissional, data e hora.');
+      return;
+    }
+
+    // simples validação adicional: data >= hoje
+    const today = new Date().toISOString().split('T')[0];
+    if(date < today){
+      alert('Escolha uma data válida (hoje ou futura).');
+      return;
+    }
+
+    const patient = getUser(SESSION_EMAIL);
+    const profUser = getUser(prof);
+
+    if(!patient){ alert('Paciente não encontrado.'); return; }
+    if(!profUser){ alert('Profissional não encontrado.'); return; }
+
+    const newAppt = {
+      id: uid(),
+      patientEmail: SESSION_EMAIL,
+      patientName: patient.name || SESSION_EMAIL,
+      professionalEmail: prof,
+      professionalName: profUser.name || prof,
+      date, time, notes,
+      status: "Pendente",
+      createdAt: new Date().toISOString()
+    };
+
+    const list = loadAppointments();
+    list.push(newAppt);
+    saveAppointments(list);
+
+    alert('Consulta agendada com sucesso!');
+    loadView('appointments');
+  } catch(err){
+    console.error("Erro em createAppointment:", err);
+    alert("Erro inesperado ao agendar. Verifique console.");
+  }
+}
+
+/* ============================
+  LISTAR CONSULTAS (por perfil)
+============================ */
+function renderAppointments(){
+  const all = loadAppointments().sort((a,b)=> (a.date + ' ' + a.time).localeCompare(b.date + ' ' + b.time));
+  if(SESSION_ROLE === "Paciente"){
+    const mine = all.filter(a => a.patientEmail === SESSION_EMAIL);
+    renderAppointmentsTable(mine, "Minhas Consultas", true, false);
+    return;
+  }
+  if(SESSION_ROLE === "Profissional"){
+    const mine = all.filter(a => a.professionalEmail === SESSION_EMAIL);
+    renderAppointmentsTable(mine, "Minha Agenda", false, true);
+    return;
+  }
+  if(SESSION_ROLE === "Administrador"){
+    renderAppointmentsTable(all, "Consultas do Sistema", false, false, true);
+    return;
+  }
+}
+
+function renderAppointmentsTable(list, title, isPatient, isPro, isAdmin){
+  if(!list.length){
+    main.innerHTML = `<div class="card"><h1>${title}</h1><p class="small">Nenhuma consulta encontrada.</p></div>`;
+    return;
+  }
+  const rows = list.map(a => {
+    let actions = '';
+    if(isPatient && a.status !== "Cancelado") actions += `<button class="ghost" onclick="cancelByPatient('${a.id}')">Cancelar</button>`;
+    if(isPro){
+      if(a.status === "Pendente") actions += `<button class="primary" style="margin-left:8px" onclick="confirmByPro('${a.id}')">Confirmar</button>`;
+      if(a.status !== "Cancelado") actions += `<button class="ghost" style="margin-left:8px" onclick="cancelByPro('${a.id}')">Cancelar</button>`;
+    }
+    if(isAdmin){
+      if(a.status !== "Confirmado") actions += `<button class="primary" onclick="adminConfirm('${a.id}')">Confirmar</button>`;
+      actions += `<button class="ghost" style="margin-left:8px" onclick="adminDelete('${a.id}')">Excluir</button>`;
+    }
+    return `<tr>
+      <td>${esc(a.date)}</td>
+      <td>${esc(a.time)}</td>
+      <td>${esc(a.patientName)}</td>
+      <td>${esc(a.professionalName)}</td>
+      <td>${esc(a.status)}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
+  main.innerHTML = `
+    <div class="card">
+      <h1>${title}</h1>
+      <table>
+        <thead><tr><th>Data</th><th>Hora</th><th>Paciente</th><th>Profissional</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+/* ============================
+  AÇÕES: cancelar / confirmar / admin
+============================ */
+function cancelByPatient(id){
+  if(!confirm("Confirmar cancelamento?")) return;
+  const list = loadAppointments();
+  const idx = list.findIndex(a => a.id === id);
+  if(idx === -1) return alert("Agendamento não encontrado.");
+  if(list[idx].patientEmail !== SESSION_EMAIL) return alert("Permissão negada.");
+  list[idx].status = "Cancelado";
+  saveAppointments(list);
+  alert("Consulta cancelada.");
+  loadView('appointments');
+}
+
+function confirmByPro(id){
+  const list = loadAppointments();
+  const idx = list.findIndex(a => a.id === id);
+  if(idx === -1) return alert("Agendamento não encontrado.");
+  if(list[idx].professionalEmail !== SESSION_EMAIL) return alert("Permissão negada.");
+  list[idx].status = "Confirmado";
+  saveAppointments(list);
+  alert("Consulta confirmada.");
+  loadView('appointments');
+}
+
+function cancelByPro(id){
+  if(!confirm("Confirmar cancelamento?")) return;
+  const list = loadAppointments();
+  const idx = list.findIndex(a => a.id === id);
+  if(idx === -1) return alert("Agendamento não encontrado.");
+  if(list[idx].professionalEmail !== SESSION_EMAIL) return alert("Permissão negada.");
+  list[idx].status = "Cancelado";
+  saveAppointments(list);
+  alert("Consulta cancelada.");
+  loadView('appointments');
+}
+
+function adminConfirm(id){
+  const list = loadAppointments();
+  const idx = list.findIndex(a => a.id === id);
+  if(idx === -1) return alert("Agendamento não encontrado.");
+  list[idx].status = "Confirmado";
+  saveAppointments(list);
+  alert("Consulta confirmada pelo administrador.");
+  loadView('appointments');
+}
+
+function adminDelete(id){
+  if(!confirm("Excluir essa consulta?")) return;
+  let list = loadAppointments();
+  list = list.filter(a => a.id !== id);
+  saveAppointments(list);
+  alert("Consulta excluída.");
+  loadView('appointments');
+}
+
+/* ============================
+  ADMIN (usuários)
+============================ */
+function renderAdmin(){
+  if(SESSION_ROLE !== "Administrador"){
+    main.innerHTML = `<div class="card"><h1>Acesso negado</h1></div>`;
+    return;
+  }
+  const users = getAllUsers();
+  const rows = users.map(u => `<tr><td>${esc(u.name||'')}</td><td>${esc(u.email||'')}</td><td>${esc(u.role||'')}</td></tr>`).join('');
+  main.innerHTML = `
+    <div class="card">
+      <h1>Administração</h1>
+      <h3 style="margin-top:8px">Cadastrar usuário</h3>
+      <label>Nome</label>
+      <input id="adm_name" placeholder="Nome completo">
+      <label>Email</label>
+      <input id="adm_email" placeholder="email@exemplo.com">
+      <label>Senha</label>
+      <input id="adm_pass" type="password" placeholder="Senha">
+      <label>Função</label>
+      <select id="adm_role">
+        <option value="Profissional">Profissional</option>
+        <option value="Administrador">Administrador</option>
+        <option value="Paciente">Paciente</option>
+      </select>
+      <div style="margin-top:10px;"><button class="primary" onclick="createAdminUser()">Criar usuário</button></div>
+      <h3 style="margin-top:18px">Usuários cadastrados</h3>
+      <table>
+        <thead><tr><th>Nome</th><th>Email</th><th>Função</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function createAdminUser(){
+  const name = document.getElementById('adm_name').value.trim();
+  const email = document.getElementById('adm_email').value.trim();
+  const pass = document.getElementById('adm_pass').value.trim();
+  const role = document.getElementById('adm_role').value;
+  if(!name || !email || !pass){ alert('Preencha todos os campos.'); return; }
+  if(!email.includes('@') || email.endsWith('@')){ alert('Email inválido.'); return; }
+  if(localStorage.getItem('MEDI_USER_'+email)){ alert('Email já cadastrado.'); return; }
+  const obj = {name,email,pass,role};
+  localStorage.setItem('MEDI_USER_'+email, JSON.stringify(obj));
+  alert('Usuário criado.');
+  renderAdmin();
+}
+
+/* ============================
+  LOGOUT
+============================ */
+function logout(){
+  localStorage.removeItem("MEDI_USER_EMAIL");
+  localStorage.removeItem("MEDI_USER_ROLE");
+  window.location.href = "index.html";
+}
+
+/* ============================
+  Sanitização final (corrige entradas inválidas automaticamente)
+============================ */
+(function sanitizeUsers(){
+  const toRemove = [];
+  for(let i=0;i<localStorage.length;i++){
+    const k = localStorage.key(i);
+    if(k && k.startsWith("MEDI_USER_")){
+      const raw = localStorage.getItem(k);
+      const parsed = safeParse(raw);
+      if(!parsed){
+        if(typeof raw === 'string' && raw.includes('@') && !raw.includes('{')){
+          const email = k.replace('MEDI_USER_','');
+          const mini = { name: email, email: email, pass: "1234", role: "Paciente" };
+          localStorage.setItem(k, JSON.stringify(mini));
+        } else {
+          toRemove.push(k);
+        }
+      }
+    }
+  }
+  toRemove.forEach(k => { console.warn("Removendo chave inválida:", k); localStorage.removeItem(k); });
+})();
+</script>
+
+</body>
+</html>
